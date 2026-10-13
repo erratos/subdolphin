@@ -1,0 +1,43 @@
+[project]
+name = "subdolphin"
+version = "0.1.0"
+description = "Subtitles from Dolphin's right-click menu, powered by subliminal"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "erratos" }]
+requires-python = ">=3.11"
+keywords = ["subtitles", "subliminal", "dolphin", "kde", "kdialog", "opensubtitles"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: KDE",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Natural Language :: French",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "subliminal>=2.7,<2.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/erratos/subdolphin"
+Issues = "https://github.com/erratos/subdolphin/issues"
+Changelog = "https://github.com/erratos/subdolphin/blob/main/CHANGELOG.md"
+
+[project.scripts]
+subdolphin = "subdolphin.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
