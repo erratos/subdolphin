@@ -1,4 +1,4 @@
-"""Fenêtres kdialog (aucune logique métier)."""
+"""kdialog windows (no business logic)."""
 
 from __future__ import annotations
 
@@ -7,94 +7,94 @@ import subprocess
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 
-#: Taille de la liste des candidats : assez large pour les noms de version.
-TAILLE_LISTE = '1100x560'
+#: Size of the candidate list: wide enough for release names.
+LIST_SIZE = '1100x560'
 
 
 class Kdialog:
-    """Fenêtres kdialog. Chaque question renvoie None si l'utilisateur annule."""
+    """kdialog windows. Every question returns None when the user cancels."""
 
-    def __init__(self, titre: str) -> None:
-        self.titre = titre
+    def __init__(self, title: str) -> None:
+        self.title = title
 
     def _kdialog(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(['kdialog', '--title', self.titre, *arguments], capture_output=True, text=True)
+        return subprocess.run(['kdialog', '--title', self.title, *arguments], capture_output=True, text=True)
 
-    def choisir(self, texte: str, choix: Sequence[tuple[str, str]]) -> str | None:
-        """Liste de lignes `(étiquette, texte)` ; renvoie l'étiquette choisie."""
-        lignes = [element for ligne in choix for element in ligne]
-        resultat = self._kdialog('--geometry', TAILLE_LISTE, '--menu', texte, *lignes)
-        etiquette = resultat.stdout.strip()
-        return etiquette if resultat.returncode == 0 and etiquette else None
+    def choose(self, text: str, lines: Sequence[tuple[str, str]]) -> str | None:
+        """List of `(tag, text)` lines; returns the chosen tag."""
+        items = [item for line in lines for item in line]
+        result = self._kdialog('--geometry', LIST_SIZE, '--menu', text, *items)
+        tag = result.stdout.strip()
+        return tag if result.returncode == 0 and tag else None
 
-    def cocher(self, texte: str, cases: Sequence[tuple[str, str, bool]]) -> list[str] | None:
-        """Cases `(étiquette, texte, cochée)` ; renvoie les étiquettes cochées."""
-        lignes = [element for e, texte_case, cochee in cases for element in (e, texte_case, 'on' if cochee else 'off')]
-        resultat = self._kdialog('--separate-output', '--checklist', texte, *lignes)
-        return resultat.stdout.split() if resultat.returncode == 0 else None
+    def check(self, text: str, boxes: Sequence[tuple[str, str, bool]]) -> list[str] | None:
+        """Check boxes `(tag, text, checked)`; returns the checked tags."""
+        items = [item for tag, label, checked in boxes for item in (tag, label, 'on' if checked else 'off')]
+        result = self._kdialog('--separate-output', '--checklist', text, *items)
+        return result.stdout.split() if result.returncode == 0 else None
 
-    def saisir(self, texte: str, defaut: str) -> str | None:
-        resultat = self._kdialog('--inputbox', texte, defaut)
-        return resultat.stdout.rstrip('\n') if resultat.returncode == 0 else None
+    def ask(self, text: str, default: str) -> str | None:
+        result = self._kdialog('--inputbox', text, default)
+        return result.stdout.rstrip('\n') if result.returncode == 0 else None
 
-    def informer(self, texte: str) -> None:
-        self._kdialog('--msgbox', texte)
+    def inform(self, text: str) -> None:
+        self._kdialog('--msgbox', text)
 
-    def erreur(self, texte: str) -> None:
-        self._kdialog('--error', texte)
+    def error(self, text: str) -> None:
+        self._kdialog('--error', text)
 
-    def notifier(self, texte: str) -> None:
-        """Notification passive, sans attendre qu'elle disparaisse."""
+    def notify(self, text: str) -> None:
+        """Passive notification, without waiting for it to disappear."""
         subprocess.Popen(
-            ['kdialog', '--title', self.titre, '--passivepopup', texte, '5'],
+            ['kdialog', '--title', self.title, '--passivepopup', text, '5'],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 
     @contextmanager
-    def _barre(self, texte: str, maximum: int, annulable: bool) -> Iterator[Barre]:
-        """Barre de progression kdialog, pilotée par D-Bus, fermée à la fin du bloc `with`."""
-        resultat = self._kdialog('--progressbar', texte, str(maximum))
-        reference = resultat.stdout.split()
-        barre = Barre(reference if resultat.returncode == 0 and len(reference) == 2 else None)
-        if annulable:
-            barre.appel('showCancelButton', 'true')
+    def _bar(self, text: str, maximum: int, cancellable: bool) -> Iterator[Bar]:
+        """kdialog progress bar, driven through D-Bus, closed at the end of the `with` block."""
+        result = self._kdialog('--progressbar', text, str(maximum))
+        reference = result.stdout.split()
+        bar = Bar(reference if result.returncode == 0 and len(reference) == 2 else None)
+        if cancellable:
+            bar.call('showCancelButton', 'true')
         try:
-            yield barre
+            yield bar
         finally:
-            barre.appel('close')
+            bar.call('close')
 
     @contextmanager
-    def attente(self, texte: str) -> Iterator[None]:
-        """Fenêtre d'attente (barre qui tourne) pendant le bloc `with`."""
-        with self._barre(texte, 0, annulable=False):
+    def waiting(self, text: str) -> Iterator[None]:
+        """Waiting window (spinning bar) during the `with` block."""
+        with self._bar(text, 0, cancellable=False):
             yield
 
-    def progression(self, texte: str, total: int) -> AbstractContextManager[Barre]:
-        """Barre « vidéo n / total » avec bouton Annuler."""
-        return self._barre(texte, total, annulable=True)
+    def progress(self, text: str, total: int) -> AbstractContextManager[Bar]:
+        """"Video n / total" bar with a Cancel button."""
+        return self._bar(text, total, cancellable=True)
 
 
-class Barre:
-    """Barre de progression ouverte (`reference` : service et objet D-Bus ; None : pas de fenêtre)."""
+class Bar:
+    """Open progress bar (`reference`: D-Bus service and object; None: no window)."""
 
     def __init__(self, reference: list[str] | None) -> None:
         self.reference = reference
         self.qdbus = shutil.which('qdbus6') or shutil.which('qdbus')
 
-    def appel(self, *arguments: str) -> str:
+    def call(self, *arguments: str) -> str:
         if self.reference is None or self.qdbus is None:
             return ''
-        resultat = subprocess.run([self.qdbus, *self.reference, *arguments], capture_output=True, text=True)
-        return resultat.stdout.strip()
+        result = subprocess.run([self.qdbus, *self.reference, *arguments], capture_output=True, text=True)
+        return result.stdout.strip()
 
-    def avancer(self, rang: int, texte: str) -> None:
-        self.appel('Set', '', 'value', str(rang))
-        self.appel('setLabelText', texte)
+    def advance(self, index: int, text: str) -> None:
+        self.call('Set', '', 'value', str(index))
+        self.call('setLabelText', text)
 
-    def annule(self) -> bool:
-        return self.appel('wasCancelled') == 'true'
+    def cancelled(self) -> bool:
+        return self.call('wasCancelled') == 'true'
 
 
-def disponible() -> bool:
+def available() -> bool:
     return shutil.which('kdialog') is not None

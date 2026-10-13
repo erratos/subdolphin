@@ -1,4 +1,4 @@
-"""Parcours « Meilleur sous-titre automatique » (PLAN.md 5.3) : ce que fait `subliminal download`."""
+"""The "Best subtitle automatically" flow: what `subliminal download` does."""
 
 from __future__ import annotations
 
@@ -13,154 +13,154 @@ from subliminal.core import AsyncProviderPool, collect_video_filepaths
 from subliminal.score import get_scores
 from subliminal.video import VIDEO_EXTENSIONS
 
-from .analyse import Analyse, analyser
+from .analysis import Analysis, analyze
 from .config import Config
-from .enregistrement import dossier_inscriptible, enregistrer
-from .recherche import affiner, configurer_cache
-from .textes import t
+from .saving import is_writable_dir, save
+from .search import configure_cache, refine_video
+from .texts import t
 
-#: Noms montrés par rubrique du bilan (au-delà : « … et N autre(s) »).
-NOMS_MAX = 10
+#: Names shown per section of the summary (beyond: "… and N more").
+MAX_NAMES = 10
 
 
-class Progression(Protocol):
-    def avancer(self, rang: int, texte: str) -> None: ...
-    def annule(self) -> bool: ...
+class Progress(Protocol):
+    def advance(self, index: int, text: str) -> None: ...
+    def cancelled(self) -> bool: ...
 
 
 class Interface(Protocol):
-    """Fenêtres du mode automatique (`ui_kdialog.Kdialog`, `ui_terminal.Terminal`, ou un faux)."""
+    """Windows of the automatic mode (`ui_kdialog.Kdialog`, `ui_terminal.Terminal`, or a fake one)."""
 
-    def progression(self, texte: str, total: int) -> AbstractContextManager[Progression]: ...
-    def informer(self, texte: str) -> None: ...
+    def progress(self, text: str, total: int) -> AbstractContextManager[Progress]: ...
+    def inform(self, text: str) -> None: ...
 
 
 @dataclass
-class Bilan:
+class Summary:
     total: int = 0
-    traitees: int = 0
-    enregistres: list[Path] = field(default_factory=list)  # sous-titres écrits
-    deja_pourvues: list[Path] = field(default_factory=list)
-    rien_trouve: list[Path] = field(default_factory=list)
-    non_reconnues: list[Path] = field(default_factory=list)
-    doublons: list[Path] = field(default_factory=list)
-    erreurs: list[tuple[Path, str]] = field(default_factory=list)
-    annule: bool = False
+    processed: int = 0
+    saved: list[Path] = field(default_factory=list)  # subtitles written
+    already_have: list[Path] = field(default_factory=list)
+    nothing_found: list[Path] = field(default_factory=list)
+    unrecognized: list[Path] = field(default_factory=list)
+    duplicates: list[Path] = field(default_factory=list)
+    errors: list[tuple[Path, str]] = field(default_factory=list)
+    cancelled: bool = False
 
 
-def collecter(chemins: Iterable[Path]) -> list[Path]:
-    """Vidéos à traiter : les fichiers donnés, et celles des dossiers (`collect_video_filepaths`, comme la
-    CLI : dossiers cachés, « sample » et liens symboliques ignorés ; pas d'archives)."""
+def collect(paths: Iterable[Path]) -> list[Path]:
+    """Videos to process: the given files, and those of the folders (`collect_video_filepaths`, as the
+    command line: hidden folders, "sample" and symbolic links are ignored; no archives)."""
     videos: list[Path] = []
-    for chemin in chemins:
-        if chemin.is_dir():
-            videos += [Path(p) for p in collect_video_filepaths(chemin, archives=False)]
-        elif chemin.name.lower().endswith(VIDEO_EXTENSIONS):
-            videos.append(chemin)
+    for path in paths:
+        if path.is_dir():
+            videos += [Path(p) for p in collect_video_filepaths(path, archives=False)]
+        elif path.name.lower().endswith(VIDEO_EXTENSIONS):
+            videos.append(path)
     return list(dict.fromkeys(videos))
 
 
-def langues_a_chercher(analyse: Analyse, config: Config) -> set[Language]:
-    """Comme la CLI : langues de la config moins celles déjà présentes, sauf réglages `force*`."""
-    presentes: set[Language] = set()
-    if not (config.force or config.force_externes):
-        presentes |= {s.language for s in analyse.externes.values()}
-    if not (config.force or config.force_integres):
-        presentes |= {p.language for p in analyse.pistes}
-    return set(config.langues) - presentes
+def languages_to_search(analysis: Analysis, config: Config) -> set[Language]:
+    """As the command line: configured languages minus those already there, unless `force*` is set."""
+    present: set[Language] = set()
+    if not (config.force or config.force_external):
+        present |= {s.language for s in analysis.external.values()}
+    if not (config.force or config.force_embedded):
+        present |= {e.language for e in analysis.embedded}
+    return set(config.languages) - present
 
 
-def traiter(chemin: Path, config: Config, pool: AsyncProviderPool, bilan: Bilan) -> None:
-    """Une vidéo : analyse, choix et téléchargement par subliminal, enregistrement sans écraser."""
-    analyse = analyser(chemin, config)
-    if analyse.video is None:
-        bilan.non_reconnues.append(chemin)
+def process(path: Path, config: Config, pool: AsyncProviderPool, summary: Summary) -> None:
+    """One video: analysis, choice and download by subliminal, saving without overwriting."""
+    analysis = analyze(path, config)
+    if analysis.video is None:
+        summary.unrecognized.append(path)
         return
-    langues = langues_a_chercher(analyse, config)
-    if not langues:
-        bilan.deja_pourvues.append(chemin)
+    languages = languages_to_search(analysis, config)
+    if not languages:
+        summary.already_have.append(path)
         return
-    if not dossier_inscriptible(chemin):
-        bilan.erreurs.append((chemin, t('auto.lecture_seule')))
+    if not is_writable_dir(path):
+        summary.errors.append((path, t('auto.read_only')))
         return
-    video = analyse.video
-    affiner(video, config)
-    telecharges = pool.download_best_subtitles(
-        pool.list_subtitles(video, langues),
+    video = analysis.video
+    refine_video(video, config)
+    downloaded = pool.download_best_subtitles(
+        pool.list_subtitles(video, languages),
         video,
-        langues,
+        languages,
         min_score=get_scores(video)['hash'] * config.min_score // 100,
-        subtitle_categories=config.categories,
+        subtitle_categories=config.subtitle_categories,
         skip_wrong_fps=config.skip_wrong_fps,
     )
-    if not telecharges:
-        bilan.rien_trouve.append(chemin)
+    if not downloaded:
+        summary.nothing_found.append(path)
         return
-    for sous_titre in telecharges:
-        resultat = enregistrer(sous_titre, analyse, config)
-        if resultat.chemin is None:
-            bilan.doublons.append(chemin)
+    for subtitle in downloaded:
+        result = save(subtitle, analysis, config)
+        if result.path is None:
+            summary.duplicates.append(path)
         else:
-            bilan.enregistres.append(resultat.chemin)
+            summary.saved.append(result.path)
 
 
-def automatique(chemins: Iterable[Path], config: Config, ui: Interface) -> Bilan:
-    """Traite toutes les vidéos (annulable entre deux vidéos), puis affiche le bilan."""
-    videos = collecter(chemins)
-    bilan = Bilan(total=len(videos))
+def run(paths: Iterable[Path], config: Config, ui: Interface) -> Summary:
+    """Processes every video (can be cancelled between two videos), then shows the summary."""
+    videos = collect(paths)
+    summary = Summary(total=len(videos))
     if videos:
-        configurer_cache(config)
+        configure_cache(config)
         with (
-            ui.progression(t('auto.debut', n=len(videos)), len(videos)) as progression,
+            ui.progress(t('auto.start', n=len(videos)), len(videos)) as progress,
             AsyncProviderPool(
                 max_workers=config.max_workers,
-                providers=list(config.sources),
-                provider_configs=config.configs_sources,
+                providers=list(config.providers),
+                provider_configs=config.provider_configs,
             ) as pool,
         ):
-            for rang, chemin in enumerate(videos):
-                if progression.annule():
-                    bilan.annule = True
+            for index, path in enumerate(videos):
+                if progress.cancelled():
+                    summary.cancelled = True
                     break
-                progression.avancer(rang, t('auto.video', rang=rang + 1, total=len(videos), nom=chemin.name))
+                progress.advance(index, t('auto.video', index=index + 1, total=len(videos), name=path.name))
                 try:
-                    traiter(chemin, config, pool, bilan)
-                except Exception as e:  # noqa: BLE001  # une vidéo en échec n'arrête pas les autres
-                    # Message seulement pour les erreurs système : les autres peuvent citer une URL avec clé.
-                    erreur = f'{type(e).__name__} : {e}' if isinstance(e, OSError) else type(e).__name__
-                    bilan.erreurs.append((chemin, erreur))
-                bilan.traitees += 1
-    ui.informer(texte_bilan(bilan, config))
-    return bilan
+                    process(path, config, pool, summary)
+                except Exception as e:  # noqa: BLE001  # one failing video does not stop the others
+                    # Message only for system errors: others may quote a URL with a key.
+                    error = f'{type(e).__name__}: {e}' if isinstance(e, OSError) else type(e).__name__
+                    summary.errors.append((path, error))
+                summary.processed += 1
+    ui.inform(summary_text(summary, config))
+    return summary
 
 
-def texte_bilan(bilan: Bilan, config: Config) -> str:
-    if not bilan.total:
-        return t('auto.aucune_video')
+def summary_text(summary: Summary, config: Config) -> str:
+    if not summary.total:
+        return t('auto.no_video')
 
-    def noms(chemins: list[Path]) -> list[str]:
-        lignes = [f'    {c.name}' for c in chemins[:NOMS_MAX]]
-        if len(chemins) > NOMS_MAX:
-            lignes.append('    ' + t('auto.autres', n=len(chemins) - NOMS_MAX))
-        return lignes
+    def names(paths: list[Path]) -> list[str]:
+        lines = [f'    {p.name}' for p in paths[:MAX_NAMES]]
+        if len(paths) > MAX_NAMES:
+            lines.append('    ' + t('auto.more', n=len(paths) - MAX_NAMES))
+        return lines
 
-    rien = (
-        t('auto.rien_trouve', seuil=config.min_score, n=len(bilan.rien_trouve))
+    nothing = (
+        t('auto.nothing_found', threshold=config.min_score, n=len(summary.nothing_found))
         if config.min_score
-        else t('auto.rien_trouve_sans_seuil', n=len(bilan.rien_trouve))
+        else t('auto.nothing_found_no_threshold', n=len(summary.nothing_found))
     )
-    lignes = [t('auto.bilan_titre', n=bilan.total), '']
-    lignes += [t('auto.enregistres', n=len(bilan.enregistres)), *noms(bilan.enregistres)]
-    lignes += [t('auto.deja_pourvues', n=len(bilan.deja_pourvues))]
-    lignes += [rien, *noms(bilan.rien_trouve)]
-    lignes += [t('auto.non_reconnues', n=len(bilan.non_reconnues)), *noms(bilan.non_reconnues)]
-    if bilan.doublons:
-        lignes += [t('auto.doublons', n=len(bilan.doublons)), *noms(bilan.doublons)]
-    if bilan.erreurs:
-        lignes += [t('auto.erreurs', n=len(bilan.erreurs))]
-        lignes += [f'    {c.name} : {erreur}' for c, erreur in bilan.erreurs[:NOMS_MAX]]
-    if bilan.annule:
-        lignes += ['', t('auto.annule', fait=bilan.traitees, total=bilan.total)]
-    if bilan.erreurs or bilan.rien_trouve:
-        lignes += ['', t('auto.aide')]
-    return '\n'.join(lignes)
+    lines = [t('auto.summary_title', n=summary.total), '']
+    lines += [t('auto.saved', n=len(summary.saved)), *names(summary.saved)]
+    lines += [t('auto.already_have', n=len(summary.already_have))]
+    lines += [nothing, *names(summary.nothing_found)]
+    lines += [t('auto.unrecognized', n=len(summary.unrecognized)), *names(summary.unrecognized)]
+    if summary.duplicates:
+        lines += [t('auto.duplicates', n=len(summary.duplicates)), *names(summary.duplicates)]
+    if summary.errors:
+        lines += [t('auto.errors', n=len(summary.errors))]
+        lines += [t('auto.error_line', name=p.name, error=error) for p, error in summary.errors[:MAX_NAMES]]
+    if summary.cancelled:
+        lines += ['', t('auto.cancelled', done=summary.processed, total=summary.total)]
+    if summary.errors or summary.nothing_found:
+        lines += ['', t('auto.help')]
+    return '\n'.join(lines)

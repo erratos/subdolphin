@@ -32,13 +32,13 @@ et quelques règles :
 
 ```bash
 uv tool install git+https://github.com/erratos/subdolphin
-subdolphin menu installer
+subdolphin menu install
 ```
 
 - Si vous utilisez aussi la commande `subliminal`, installez les deux avec **le même Python**
   (`--python`, par exemple `--python /usr/bin/python3.14`) : elles partagent un cache dont le format de
   fichier dépend de Python (voir [Dépannage](#dépannage)).
-- `subdolphin menu installer` écrit deux menus de service dans `~/.local/share/kio/servicemenus/`
+- `subdolphin menu install` écrit deux menus de service dans `~/.local/share/kio/servicemenus/`
   (exécutables, comme KDE l'exige). Ils lancent la commande `subdolphin` qui les a installés, par son
   chemin absolu : relancez-la si la commande change de place.
 - Redémarrez Dolphin si le menu n'apparaît pas.
@@ -73,15 +73,16 @@ un épisode.
 
 ### En ligne de commande
 
-L'interface suit la langue du système (français ou anglais).
+Les commandes sont en anglais ; l'interface suit la langue du système : anglais, ou français sur un
+système en français.
 
 ```bash
-subdolphin liste VIDÉO [--titre "Titre (année)"] [-n N] [--json]  # recherche seule, rien n'est téléchargé
-subdolphin choisir VIDÉO                                          # « Choisir un sous-titre… » (fenêtres)
-subdolphin auto CHEMIN… [--texte]                                 # automatique ; --texte : dans le terminal
-subdolphin menu installer | retirer                               # installer / retirer le menu de Dolphin
-subdolphin --debug …                                              # afficher le journal de subliminal
-subdolphin --config FICHIER …                                     # un autre subliminal.toml
+subdolphin list VIDÉO [--title "Titre (année)"] [-n N] [--json]  # recherche seule, rien n'est téléchargé
+subdolphin choose VIDÉO                                          # « Choisir un sous-titre… » (fenêtres)
+subdolphin auto CHEMIN… [--text]                                 # automatique ; --text : dans le terminal
+subdolphin menu install | remove                                 # installer / retirer le menu de Dolphin
+subdolphin --debug …                                             # afficher le journal de subliminal
+subdolphin --config FICHIER …                                    # un autre subliminal.toml
 ```
 
 `subdolphin COMMANDE --help` décrit chaque étape en termes de subliminal, avec la commande `subliminal`
@@ -167,7 +168,7 @@ de langue indéterminée. Le mode automatique peut donc ajouter plus tard un `Fi
 
 ## Dépannage
 
-- **Voir ce qui se passe** : lancez `subdolphin --debug choisir VIDÉO` (ou `liste`, ou `auto --texte`)
+- **Voir ce qui se passe** : lancez `subdolphin --debug choose VIDÉO` (ou `list`, ou `auto --text`)
   dans un terminal. Comme `subliminal --debug`, le journal peut afficher un jeton de session
   OpenSubtitles.org : ne le publiez pas.
 - **Commande `subliminal` la plus proche** (télécharge dans un dossier à part, sans toucher aux fichiers
@@ -179,7 +180,7 @@ de langue indéterminée. Le mode automatique peut donc ajouter plus tard un `Fi
   subliminal ignore les erreurs de cache sans rien dire, ce qui empêche la connexion à OpenSubtitles.com
   (son jeton est gardé dans le cache) et les recherches TMDB. Correction : réinstaller les deux outils avec
   le même `--python`, puis supprimer l'ancien fichier de cache ; il se reconstruit tout seul.
-- **Pas de menu** : relancez `subdolphin menu installer` et redémarrez Dolphin. Le menu n'apparaît que sur
+- **Pas de menu** : relancez `subdolphin menu install` et redémarrez Dolphin. Le menu n'apparaît que sur
   des fichiers locaux : « Choisir… » pour une seule vidéo, « Meilleur sous-titre automatique » pour des
   vidéos et des dossiers ; il est masqué si la sélection contient d'autres fichiers.
 
@@ -187,8 +188,9 @@ de langue indéterminée. Le mode automatique peut donc ajouter plus tard un `Fi
 
 ```bash
 uv tool install --reinstall git+https://github.com/erratos/subdolphin   # avec le même --python qu'avant
-subdolphin menu retirer
-uv tool uninstall subdolphin
+subdolphin menu install                                                 # après une mise à jour : rafraîchir le menu
+subdolphin menu remove                                                  # désinstallation : retirer le menu…
+uv tool uninstall subdolphin                                            # …puis la commande
 ```
 
 ## Développement
@@ -198,23 +200,24 @@ git clone https://github.com/erratos/subdolphin
 cd subdolphin
 uv sync
 uv run pytest
-uv run subdolphin liste VIDÉO
+uv run subdolphin list VIDÉO
 ```
 
-Les tests n'utilisent jamais le réseau (il est bloqué dans `tests/conftest.py`). Organisation de
+Les tests n'utilisent jamais le réseau (il est bloqué dans `tests/conftest.py`). Le code, les noms et
+les commentaires sont en anglais ; seuls les textes affichés sont traduits (`texts.py`). Organisation de
 `src/subdolphin/` :
 
 | Module | Rôle |
 |---|---|
 | `config.py` | lit `subliminal.toml` avec les règles de la ligne de commande de subliminal |
-| `analyse.py` | reconnaît la vidéo (`scan_video`), pistes intégrées, sous-titres présents |
-| `recherche.py` | refiners, liste des candidats, scores, seuil, téléchargement |
-| `enregistrement.py` | noms de fichiers, doublons, écriture sans écrasement |
-| `parcours.py` | parcours « Choisir un sous-titre… », indépendant des fenêtres |
+| `analysis.py` | reconnaît la vidéo (`scan_video`), pistes intégrées, sous-titres présents |
+| `search.py` | refiners, liste des candidats, scores, seuil, téléchargement |
+| `saving.py` | noms de fichiers, doublons, écriture sans écrasement |
+| `choose.py` | parcours « Choisir un sous-titre… », indépendant des fenêtres |
 | `auto.py` | mode automatique |
 | `ui_kdialog.py`, `ui_terminal.py` | fenêtres kdialog, affichage dans le terminal |
 | `menu.py` | menus de service de Dolphin |
-| `textes.py` | textes de l'interface (français, anglais) |
+| `texts.py` | textes de l'interface (français, anglais) |
 | `cli.py` | ligne de commande |
 
 ## Licence

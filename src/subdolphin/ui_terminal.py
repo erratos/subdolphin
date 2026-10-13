@@ -1,4 +1,4 @@
-"""Affichage dans le terminal (`--texte`), pour essayer ou diagnostiquer sans fenêtre."""
+"""Terminal output (`--text`), to try things out or diagnose without windows."""
 
 from __future__ import annotations
 
@@ -9,22 +9,22 @@ from contextlib import contextmanager
 
 class Terminal:
     @contextmanager
-    def progression(self, texte: str, total: int) -> Iterator[Ligne]:
-        print(texte, flush=True)
-        yield Ligne()
+    def progress(self, text: str, total: int) -> Iterator[Line]:
+        print(text, flush=True)
+        yield Line()
 
-    def informer(self, texte: str) -> None:
-        print(texte)
+    def inform(self, text: str) -> None:
+        print(text)
 
-    def erreur(self, texte: str) -> None:
-        print(texte, file=sys.stderr)
+    def error(self, text: str) -> None:
+        print(text, file=sys.stderr)
 
 
-class Ligne:
-    """Progression : une ligne par vidéo ; on annule avec Ctrl+C."""
+class Line:
+    """Progress: one line per video; cancel with Ctrl+C."""
 
-    def avancer(self, rang: int, texte: str) -> None:
-        print(texte, flush=True)
+    def advance(self, index: int, text: str) -> None:
+        print(text, flush=True)
 
-    def annule(self) -> bool:
+    def cancelled(self) -> bool:
         return False

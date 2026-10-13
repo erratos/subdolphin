@@ -30,13 +30,13 @@ subliminal's own (same `subliminal.toml`). subdolphin adds the windows (kdialog)
 
 ```bash
 uv tool install git+https://github.com/erratos/subdolphin
-subdolphin menu installer
+subdolphin menu install
 ```
 
 - If you also use the `subliminal` command, install both with **the same Python** (`--python`, e.g.
   `--python /usr/bin/python3.14`): they share a cache whose file format depends on Python (see
   [Troubleshooting](#troubleshooting)).
-- `subdolphin menu installer` writes two service menus to `~/.local/share/kio/servicemenus/`
+- `subdolphin menu install` writes two service menus to `~/.local/share/kio/servicemenus/`
   (executable, as KDE requires). They run the `subdolphin` command that installed them, by absolute path:
   run it again if the command moves.
 - Restart Dolphin if the menu does not show up.
@@ -70,15 +70,15 @@ If the title is not recognised, you are asked to type it: `Title (year)` for a m
 
 ### Command line
 
-Command names are French; the interface follows the system language (French or English).
+The interface follows the system language: English, or French on a French system.
 
 ```bash
-subdolphin liste VIDEO [--titre "Title (year)"] [-n N] [--json]   # search only, nothing downloaded
-subdolphin choisir VIDEO                                           # "Choose a subtitle…" (windows)
-subdolphin auto PATH… [--texte]                                    # automatic; --texte: in the terminal
-subdolphin menu installer | retirer                                # install / remove the Dolphin menu
-subdolphin --debug …                                               # show subliminal's log
-subdolphin --config FILE …                                         # another subliminal.toml
+subdolphin list VIDEO [--title "Title (year)"] [-n N] [--json]   # search only, nothing downloaded
+subdolphin choose VIDEO                                          # "Choose a subtitle…" (windows)
+subdolphin auto PATH… [--text]                                   # automatic; --text: in the terminal
+subdolphin menu install | remove                                 # install / remove the Dolphin menu
+subdolphin --debug …                                             # show subliminal's log
+subdolphin --config FILE …                                       # another subliminal.toml
 ```
 
 `subdolphin COMMAND --help` describes each step in terms of subliminal, with the closest `subliminal`
@@ -163,7 +163,7 @@ anything.
 
 ## Troubleshooting
 
-- **See what happens**: run `subdolphin --debug choisir VIDEO` (or `liste`, or `auto --texte`) in a
+- **See what happens**: run `subdolphin --debug choose VIDEO` (or `list`, or `auto --text`) in a
   terminal. Like `subliminal --debug`, the log may show an OpenSubtitles.org session token: do not paste
   it publicly.
 - **Closest `subliminal` command** (downloads into a separate folder, leaves the video's files alone):
@@ -174,7 +174,7 @@ anything.
   read, and the reverse also happens. subliminal silently ignores cache errors, which breaks the
   OpenSubtitles.com login (its token is kept in the cache) and the TMDB lookups. Fix: reinstall both
   tools with the same `--python`, then delete the old cache file; it rebuilds itself.
-- **No menu**: run `subdolphin menu installer` again and restart Dolphin. The menu appears only on local
+- **No menu**: run `subdolphin menu install` again and restart Dolphin. The menu appears only on local
   files: "Choose…" for exactly one video, "Best subtitle automatically" for videos and folders; it is
   hidden when the selection contains other files.
 
@@ -182,8 +182,9 @@ anything.
 
 ```bash
 uv tool install --reinstall git+https://github.com/erratos/subdolphin   # add the same --python as before
-subdolphin menu retirer
-uv tool uninstall subdolphin
+subdolphin menu install                                                 # after an update: refresh the menu
+subdolphin menu remove                                                  # uninstall: remove the menu…
+uv tool uninstall subdolphin                                            # …then the command
 ```
 
 ## Development
@@ -193,23 +194,23 @@ git clone https://github.com/erratos/subdolphin
 cd subdolphin
 uv sync
 uv run pytest
-uv run subdolphin liste VIDEO
+uv run subdolphin list VIDEO
 ```
 
-Tests never use the network (it is blocked in `tests/conftest.py`). Identifiers and comments are in
-French. Layout of `src/subdolphin/`:
+Tests never use the network (it is blocked in `tests/conftest.py`). Code, names and comments are in
+English; only the displayed texts are translated (`texts.py`). Layout of `src/subdolphin/`:
 
 | Module | Role |
 |---|---|
 | `config.py` | reads `subliminal.toml` with the rules of subliminal's command line |
-| `analyse.py` | recognises the video (`scan_video`), embedded tracks, existing subtitles |
-| `recherche.py` | refiners, candidate list, scores, threshold, download |
-| `enregistrement.py` | file names, duplicates, writing without overwriting |
-| `parcours.py` | "Choose a subtitle…" flow, independent of the windows |
+| `analysis.py` | recognises the video (`scan_video`), embedded tracks, existing subtitles |
+| `search.py` | refiners, candidate list, scores, threshold, download |
+| `saving.py` | file names, duplicates, writing without overwriting |
+| `choose.py` | "Choose a subtitle…" flow, independent of the windows |
 | `auto.py` | automatic mode |
 | `ui_kdialog.py`, `ui_terminal.py` | kdialog windows, terminal output |
 | `menu.py` | Dolphin service menus |
-| `textes.py` | interface texts (French, English) |
+| `texts.py` | interface texts (French, English) |
 | `cli.py` | command line |
 
 ## License

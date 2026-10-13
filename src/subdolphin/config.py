@@ -1,4 +1,4 @@
-"""Lecture du TOML de subliminal : sources, refiners, substitution de nom."""
+"""Reads subliminal's TOML configuration: providers, refiners, name substitution."""
 
 from __future__ import annotations
 
@@ -14,126 +14,126 @@ from platformdirs import PlatformDirs
 from subliminal.extensions import get_default_providers, get_default_refiners
 from subliminal.utils import NameResolver, merge_extend_and_ignore_unions
 
-from .textes import t
+from .texts import t
 
-DOSSIERS = PlatformDirs('subliminal')
-CHEMIN_PAR_DEFAUT = DOSSIERS.user_config_path / 'subliminal.toml'
+DIRS = PlatformDirs('subliminal')
+DEFAULT_PATH = DIRS.user_config_path / 'subliminal.toml'
 
-#: Règle intégrée, appliquée après celle de la config : retirer le point de montage, que guessit
-#: prendrait pour un titre (PLAN.md 4.3, point 1).
-NOM_PAR_DEFAUT = ('s|^/run/media/[^/]+/[^/]+/||', 's|^/media/[^/]+/[^/]+/||')
+#: Built-in rule, applied after the configuration's own patterns: strip the mount point, which guessit
+#: would take for a title.
+DEFAULT_NAME_PATTERNS = ('s|^/run/media/[^/]+/[^/]+/||', 's|^/media/[^/]+/[^/]+/||')
 
 
-class ErreurConfig(Exception):
-    """Configuration de subliminal inutilisable (message prêt à afficher)."""
+class ConfigError(Exception):
+    """Unusable subliminal configuration (message ready to display)."""
 
 
 @dataclass
 class Config:
-    """Réglages de subliminal utiles à subdolphin.
+    """The subliminal settings subdolphin uses.
 
-    `configs_sources` et `configs_refiners` contiennent des secrets : ils sont exclus du `repr` et ne
-    doivent jamais être affichés ni journalisés.
+    `provider_configs` and `refiner_configs` hold secrets: they are left out of `repr` and must never be
+    displayed or logged.
     """
 
-    chemin: Path
-    langues: frozenset[Language]
-    sources: tuple[str, ...]
+    path: Path
+    languages: frozenset[Language]
+    providers: tuple[str, ...]
     refiners: tuple[str, ...]
-    configs_sources: dict[str, dict[str, Any]] = field(repr=False)
-    configs_refiners: dict[str, dict[str, Any]] = field(repr=False)
-    resolveurs_nom: tuple[NameResolver, ...] = field(repr=False)
-    dossier_cache: Path
+    provider_configs: dict[str, dict[str, Any]] = field(repr=False)
+    refiner_configs: dict[str, dict[str, Any]] = field(repr=False)
+    name_resolvers: tuple[NameResolver, ...] = field(repr=False)
+    cache_dir: Path
     max_workers: int | None = None
-    #: Réglages `[download]` transmis tels quels à subliminal (mêmes valeurs par défaut que sa CLI).
-    encodage: str | None = 'utf-8'  # None : garder l'encodage d'origine (`encoding = ""`)
-    format_sous_titres: str | None = None  # `subtitle_format`, None : garder le format d'origine
-    format_langue: str = 'alpha2'  # `language_format`
-    categories: str = ''  # `subtitle_categories`, ex. "n,hi" ou "fo" (forcés seulement)
-    min_score: int = 0  # `min_score`, en % du score maximum (comme la CLI)
-    skip_wrong_fps: bool = False  # `skip_wrong_fps`
-    #: Mode automatique : télécharger même si la langue est déjà là (`force`), en ne comptant pas les
-    #: fichiers externes (`force_external_subtitles`) ou les pistes intégrées (`force_embedded_subtitles`).
+    #: `[download]` settings passed as is to subliminal (same defaults as its command line).
+    encoding: str | None = 'utf-8'  # None: keep the original encoding (`encoding = ""`)
+    subtitle_format: str | None = None  # None: keep the original format
+    language_format: str = 'alpha2'
+    subtitle_categories: str = ''  # e.g. "n,hi", or "fo" (forced only)
+    min_score: int = 0  # in % of the maximum score, as the command line
+    skip_wrong_fps: bool = False
+    #: Automatic mode: download even if the language is already there (`force`), ignoring external files
+    #: (`force_external_subtitles`) or embedded tracks (`force_embedded_subtitles`).
     force: bool = False
-    force_externes: bool = False
-    force_integres: bool = False
+    force_external: bool = False
+    force_embedded: bool = False
 
-    def nom_pour_guessit(self, chemin: str | os.PathLike[str]) -> str:
-        """Nom passé à guessit : motifs de la config, puis règle intégrée."""
-        nom = os.fspath(chemin)
-        for resolveur in self.resolveurs_nom:
-            nom = resolveur(nom) or nom
-        return nom
+    def guessit_name(self, path: str | os.PathLike[str]) -> str:
+        """Name passed to guessit: the configuration's patterns, then the built-in rule."""
+        name = os.fspath(path)
+        for resolver in self.name_resolvers:
+            name = resolver(name) or name
+        return name
 
 
-def _listes(section: dict[str, Any], cle: str) -> dict[str, list[str]]:
+def _lists(section: dict[str, Any], key: str) -> dict[str, list[str]]:
     return {
-        'select': list(section.get(cle, [])),
-        'extend': list(section.get(f'extend_{cle}', [])),
-        'ignore': list(section.get(f'ignore_{cle}', [])),
+        'select': list(section.get(key, [])),
+        'extend': list(section.get(f'extend_{key}', [])),
+        'ignore': list(section.get(f'ignore_{key}', [])),
     }
 
 
-def lire(donnees: dict[str, Any], chemin: Path) -> Config:
-    """Construit la `Config` à partir du TOML déjà lu, avec les règles de la CLI de subliminal."""
-    telechargement = donnees.get('download', {})
-    vides = {'select': [], 'extend': [], 'ignore': []}
+def parse(data: dict[str, Any], path: Path) -> Config:
+    """Builds the `Config` from the already-read TOML, with the rules of subliminal's command line."""
+    download = data.get('download', {})
+    empty = {'select': [], 'extend': [], 'ignore': []}
 
-    codes = telechargement.get('language', [])
+    codes = download.get('language', [])
     if isinstance(codes, str):
         codes = [codes]
     try:
-        langues = frozenset(Language.fromietf(code) for code in codes)
+        languages = frozenset(Language.fromietf(code) for code in codes)
     except (ValueError, babelfish.Error) as e:
-        raise ErreurConfig(t('err.config_toml', chemin=chemin, erreur=e)) from e
-    if not langues:
-        raise ErreurConfig(t('err.config_langue', chemin=chemin))
+        raise ConfigError(t('err.config_toml', path=path, error=e)) from e
+    if not languages:
+        raise ConfigError(t('err.config_language', path=path))
 
-    resolveurs = []
-    nom = telechargement.get('name')
+    resolvers = []
+    name = download.get('name')
     try:
-        if nom:
-            resolveurs.append(NameResolver.from_name(nom))
-        resolveurs.append(NameResolver.from_name(NOM_PAR_DEFAUT))
+        if name:
+            resolvers.append(NameResolver.from_name(name))
+        resolvers.append(NameResolver.from_name(DEFAULT_NAME_PATTERNS))
     except ValueError as e:
-        raise ErreurConfig(t('err.config_nom', chemin=chemin, erreur=e)) from e
+        raise ConfigError(t('err.config_name', path=path, error=e)) from e
 
-    sources = merge_extend_and_ignore_unions(vides, _listes(telechargement, 'provider'), get_default_providers())
-    refiners = merge_extend_and_ignore_unions(vides, _listes(telechargement, 'refiner'), get_default_refiners())
+    providers = merge_extend_and_ignore_unions(empty, _lists(download, 'provider'), get_default_providers())
+    refiners = merge_extend_and_ignore_unions(empty, _lists(download, 'refiner'), get_default_refiners())
 
-    defaut = donnees.get('default', {})
-    dossier_cache = Path(defaut.get('cache_dir', DOSSIERS.user_cache_dir)).expanduser()
+    defaults = data.get('default', {})
+    cache_dir = Path(defaults.get('cache_dir', DIRS.user_cache_dir)).expanduser()
 
     return Config(
-        chemin=chemin,
-        langues=langues,
-        sources=tuple(sorted(sources)),
+        path=path,
+        languages=languages,
+        providers=tuple(sorted(providers)),
         refiners=tuple(r for r in get_default_refiners() if r in refiners),
-        configs_sources={k: dict(v) for k, v in donnees.get('provider', {}).items()},
-        configs_refiners={k: dict(v) for k, v in donnees.get('refiner', {}).items()},
-        resolveurs_nom=tuple(resolveurs),
-        dossier_cache=dossier_cache,
-        max_workers=telechargement.get('max_workers'),
-        encodage=telechargement.get('encoding', 'utf-8') or None,
-        format_sous_titres=telechargement.get('subtitle_format') or None,
-        format_langue=telechargement.get('language_format', 'alpha2'),
-        categories=telechargement.get('subtitle_categories', ''),
-        min_score=int(telechargement.get('min_score', 0)),
-        skip_wrong_fps=bool(telechargement.get('skip_wrong_fps', False)),
-        force=bool(telechargement.get('force', False)),
-        force_externes=bool(telechargement.get('force_external_subtitles', False)),
-        force_integres=bool(telechargement.get('force_embedded_subtitles', False)),
+        provider_configs={k: dict(v) for k, v in data.get('provider', {}).items()},
+        refiner_configs={k: dict(v) for k, v in data.get('refiner', {}).items()},
+        name_resolvers=tuple(resolvers),
+        cache_dir=cache_dir,
+        max_workers=download.get('max_workers'),
+        encoding=download.get('encoding', 'utf-8') or None,
+        subtitle_format=download.get('subtitle_format') or None,
+        language_format=download.get('language_format', 'alpha2'),
+        subtitle_categories=download.get('subtitle_categories', ''),
+        min_score=int(download.get('min_score', 0)),
+        skip_wrong_fps=bool(download.get('skip_wrong_fps', False)),
+        force=bool(download.get('force', False)),
+        force_external=bool(download.get('force_external_subtitles', False)),
+        force_embedded=bool(download.get('force_embedded_subtitles', False)),
     )
 
 
-def charger(chemin: str | os.PathLike[str] | None = None) -> Config:
-    """Lit le fichier de configuration de subliminal (absent : réglages par défaut)."""
-    chemin = Path(chemin).expanduser() if chemin else CHEMIN_PAR_DEFAUT
-    donnees: dict[str, Any] = {}
-    if chemin.is_file():
+def load(path: str | os.PathLike[str] | None = None) -> Config:
+    """Reads subliminal's configuration file (missing: default settings)."""
+    path = Path(path).expanduser() if path else DEFAULT_PATH
+    data: dict[str, Any] = {}
+    if path.is_file():
         try:
-            with chemin.open('rb') as f:
-                donnees = tomllib.load(f)
+            with path.open('rb') as f:
+                data = tomllib.load(f)
         except (OSError, tomllib.TOMLDecodeError) as e:
-            raise ErreurConfig(t('err.config_toml', chemin=chemin, erreur=e)) from e
-    return lire(donnees, chemin)
+            raise ConfigError(t('err.config_toml', path=path, error=e)) from e
+    return parse(data, path)

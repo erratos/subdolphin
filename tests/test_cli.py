@@ -3,123 +3,127 @@ import logging
 from pathlib import Path
 
 import pytest
-from aides import FauxSousTitre
+from helpers import FakeSubtitle
 
-from subdolphin import cli
-from subdolphin.recherche import ordonner
+from subdolphin import auto, cli
+from subdolphin.search import sort_candidates
 
 
 @pytest.fixture
 def config(tmp_path: Path) -> Path:
-    chemin = tmp_path / 'subliminal.toml'
-    chemin.write_text('[download]\nlanguage = ["fr"]\nname = ["s|^.*/||"]\n')
-    return chemin
+    path = tmp_path / 'subliminal.toml'
+    path.write_text('[download]\nlanguage = ["fr"]\nname = ["s|^.*/||"]\n')
+    return path
 
 
 @pytest.fixture
-def sans_sources(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remplace la recherche réseau : deux candidats."""
-    monkeypatch.setattr(cli, 'affiner', lambda video, config: None)
+def no_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replaces the network search: two candidates."""
+    monkeypatch.setattr(cli, 'refine_video', lambda video, config: None)
     monkeypatch.setattr(
         cli,
-        'lister',
-        lambda video, config: ordonner(
-            [FauxSousTitre({'title'}, identifiant='b', malentendants=True), FauxSousTitre({'hash'}, identifiant='a')],
+        'list_candidates',
+        lambda video, config: sort_candidates(
+            [FakeSubtitle({'title'}, subtitle_id='b', hearing_impaired=True), FakeSubtitle({'hash'}, subtitle_id='a')],
             video,
         ),
     )
 
 
 @pytest.fixture(autouse=True)
-def journal_propre():
-    """`main` règle le journal de subliminal : le remettre en état après chaque test."""
-    journal = logging.getLogger('subliminal')
-    handlers, niveau = list(journal.handlers), journal.level
+def clean_logging():
+    """`main` sets up subliminal's logger: restore it after each test."""
+    logger = logging.getLogger('subliminal')
+    handlers, level = list(logger.handlers), logger.level
     yield
-    journal.handlers[:] = handlers
-    journal.setLevel(niveau)
+    logger.handlers[:] = handlers
+    logger.setLevel(level)
 
 
-def test_liste_titre_introuvable(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_list_unrecognised_title(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str]) -> None:
     video = tmp_path / '2006.mkv'
     video.touch()
-    assert cli.main(['--config', str(config), 'liste', str(video), '--json']) == 3
-    assert json.loads(capsys.readouterr().out)['reconnu'] is None
+    assert cli.main(['--config', str(config), 'list', str(video), '--json']) == 3
+    assert json.loads(capsys.readouterr().out)['recognized'] is None
 
 
-def test_liste_texte(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], sans_sources: None) -> None:
+def test_list_text(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], no_providers: None) -> None:
     video = tmp_path / 'The Fall (2006).mkv'
     video.touch()
     (tmp_path / 'The Fall (2006).fr.hi.srt').touch()
-    assert cli.main(['--config', str(config), 'liste', str(video)]) == 0
-    sortie = capsys.readouterr().out
-    assert 'Reconnu : film « The Fall (2006) »' in sortie
-    assert 'The Fall (2006).fr.hi.srt (fr, malentendants)' in sortie
-    assert '  1   100,0 %  ★  faux' in sortie
-    assert '2 candidat(s) trouvé(s), 2 affiché(s).' in sortie
+    assert cli.main(['--config', str(config), 'list', str(video)]) == 0
+    output = capsys.readouterr().out
+    assert 'Reconnu : film « The Fall (2006) »' in output
+    assert 'The Fall (2006).fr.hi.srt (fr, malentendants)' in output
+    assert '  1   100,0 %  ★  fake' in output
+    assert '2 candidat(s) trouvé(s), 2 affiché(s).' in output
 
 
-def test_liste_json(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], sans_sources: None) -> None:
+def test_list_json(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], no_providers: None) -> None:
     video = tmp_path / 'The Fall (2006).mkv'
     video.touch()
-    assert cli.main(['--config', str(config), 'liste', str(video), '--json', '-n', '1']) == 0
-    resultat = json.loads(capsys.readouterr().out)
-    assert resultat['reconnu'] == {'type': 'film', 'titre': 'The Fall (2006)'}
-    assert resultat['nombre_candidats'] == 2
-    assert [(c['id'], c['empreinte']) for c in resultat['candidats']] == [('a', True)]
+    assert cli.main(['--config', str(config), 'list', str(video), '--json', '-n', '1']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['recognized'] == {'type': 'movie', 'title': 'The Fall (2006)'}
+    assert result['candidate_count'] == 2
+    assert [(c['id'], c['hash_match'], c['provider']) for c in result['candidates']] == [('a', True, 'fake')]
 
 
-def test_debug_affiche_le_journal_de_subliminal(
-    tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], sans_sources: None
+def test_debug_shows_subliminal_log(
+    tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], no_providers: None
 ) -> None:
     video = tmp_path / 'The Fall (2006).mkv'
     video.touch()
-    assert cli.main(['--config', str(config), '--debug', 'liste', str(video)]) == 0
+    assert cli.main(['--config', str(config), '--debug', 'list', str(video)]) == 0
     assert 'DEBUG:subliminal' in capsys.readouterr().err
 
 
-def test_aide_documente_la_commande_subliminal(capsys: pytest.CaptureFixture[str]) -> None:
+def test_help_documents_the_subliminal_command(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
-        cli.main(['liste', '--help'])
+        cli.main(['list', '--help'])
     assert 'subliminal --debug download -l fr --force -d /tmp/essai' in capsys.readouterr().out
 
 
-def test_config_inutilisable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    chemin = tmp_path / 'subliminal.toml'
-    chemin.write_text('[download]\n')
-    assert cli.main(['--config', str(chemin), 'liste', str(tmp_path / 'x.mkv')]) == 2
+def test_unusable_configuration(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / 'subliminal.toml'
+    path.write_text('[download]\n')
+    assert cli.main(['--config', str(path), 'list', str(tmp_path / 'x.mkv')]) == 2
     assert 'Aucune langue' in capsys.readouterr().err
 
 
-def test_video_absente(config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(['--config', str(config), 'liste', str(tmp_path / 'absente.mkv')]) == 2
+def test_missing_video(config: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(['--config', str(config), 'list', str(tmp_path / 'missing.mkv')]) == 2
     assert 'Vidéo inutilisable' in capsys.readouterr().err
 
 
-def test_liste_seuil_min_score(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], sans_sources: None
-) -> None:
-    chemin = tmp_path / 'subliminal.toml'
-    chemin.write_text('[download]\nlanguage = ["fr"]\nname = ["s|^.*/||"]\nmin_score = 60\n')
+def test_list_min_score(tmp_path: Path, capsys: pytest.CaptureFixture[str], no_providers: None) -> None:
+    path = tmp_path / 'subliminal.toml'
+    path.write_text('[download]\nlanguage = ["fr"]\nname = ["s|^.*/||"]\nmin_score = 60\n')
     video = tmp_path / 'The Fall (2006).mkv'
     video.touch()
-    assert cli.main(['--config', str(chemin), 'liste', str(video)]) == 0
-    sortie = capsys.readouterr().out
-    assert '2 candidat(s) trouvé(s), dont 1 à 60 % ou plus ; 1 affiché(s).' in sortie
+    assert cli.main(['--config', str(path), 'list', str(video)]) == 0
+    output = capsys.readouterr().out
+    assert '2 candidat(s) trouvé(s), dont 1 à 60 % ou plus ; 1 affiché(s).' in output
 
 
-def test_auto_texte(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], monkeypatch) -> None:
-    from subdolphin import auto
-
-    monkeypatch.setattr(auto, 'configurer_cache', lambda config: None)
+def test_auto_text(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], monkeypatch) -> None:
+    monkeypatch.setattr(auto, 'configure_cache', lambda config: None)
     (tmp_path / '2006.mkv').touch()
-    assert cli.main(['--config', str(config), 'auto', '--texte', str(tmp_path)]) == 0
-    sortie = capsys.readouterr().out
-    assert 'Vidéo 1 / 1 : 2006.mkv' in sortie
-    assert 'Titre non reconnu (utiliser « Choisir… ») : 1\n    2006.mkv' in sortie
+    assert cli.main(['--config', str(config), 'auto', '--text', str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert 'Vidéo 1 / 1 : 2006.mkv' in output
+    assert 'Titre non reconnu (utiliser « Choisir un sous-titre… ») : 1\n    2006.mkv' in output
+
+
+def test_english_interface(tmp_path: Path, config: Path, capsys: pytest.CaptureFixture[str], monkeypatch) -> None:
+    monkeypatch.setenv('LANG', 'en_US.UTF-8')
+    monkeypatch.setattr(auto, 'configure_cache', lambda config: None)
+    (tmp_path / '2006.mkv').touch()
+    assert cli.main(['--config', str(config), 'auto', '--text', str(tmp_path)]) == 0
+    assert 'Title not recognised (use "Choose a subtitle…"): 1' in capsys.readouterr().out
 
 
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         cli.main(['--version'])
-    assert capsys.readouterr().out.startswith('subdolphin 0.1.0')
+    assert capsys.readouterr().out.startswith('subdolphin 0.2.0')

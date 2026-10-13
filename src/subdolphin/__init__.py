@@ -1,1 +1,1 @@
-"""subdolphin : sous-titres depuis le clic droit de Dolphin (subliminal + kdialog)."""
+"""subdolphin: subtitles from Dolphin's right-click menu (subliminal + kdialog)."""

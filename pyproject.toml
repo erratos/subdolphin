@@ -1,6 +1,6 @@
 [project]
 name = "subdolphin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Subtitles from Dolphin's right-click menu, powered by subliminal"
 readme = "README.md"
 license = "MIT"

@@ -1,4 +1,4 @@
-"""Point d'entrée : subdolphin liste / choisir / auto / menu."""
+"""Command line: subdolphin list / choose / auto / menu."""
 
 from __future__ import annotations
 
@@ -13,247 +13,238 @@ from typing import Any
 
 from subliminal.video import Episode
 
+from . import auto, menu, ui_kdialog, ui_terminal
 from . import config as configuration
-from . import menu, ui_kdialog, ui_terminal
-from .analyse import Analyse, analyser, nature, titre_lisible
-from .auto import automatique
-from .parcours import choisir, decrire
-from .recherche import NOMBRE_CANDIDATS, Candidat, affiner, au_dessus, lister
-from .textes import pourcentage, t
+from .analysis import Analysis, analyze, kind, readable_title
+from .choose import choose, describe
+from .search import DEFAULT_COUNT, Candidate, above_threshold, list_candidates, refine_video
+from .texts import percent, t
 
 
-def ligne_candidat(rang: int, c: Candidat) -> str:
+def candidate_line(index: int, c: Candidate) -> str:
     fps = f'{c.fps:g}' if c.fps else ''
+    machine_translated = t('mark.machine_translated') if c.machine_translated else '  '
     return (
-        f'{rang:3d}  {pourcentage(c.pourcentage):>8}  {"★" if c.empreinte else " "}  {c.source:<16}  '
-        f'{"HI" if c.malentendants else "  "}  {"TA" if c.traduction_auto else "  "}  {fps:<6}  {c.version}'
+        f'{index:3d}  {percent(c.percent):>8}  {"★" if c.hash_match else " "}  {c.provider:<16}  '
+        f'{"HI" if c.hearing_impaired else "  "}  {machine_translated}  {fps:<6}  {c.release}'
     )
 
 
-def afficher_analyse(analyse: Analyse) -> None:
-    print(t('liste.video', nom=analyse.chemin.name))
-    print(t('liste.nom_analyse', nom=analyse.nom_guessit))
-    if analyse.video is None:
-        print(t('liste.non_reconnu'))
+def print_analysis(analysis: Analysis) -> None:
+    print(t('list.video', name=analysis.path.name))
+    print(t('list.guessit_name', name=analysis.guessit_name))
+    if analysis.video is None:
+        print(t('list.unrecognized'))
     else:
-        cle = 'liste.episode' if isinstance(analyse.video, Episode) else 'liste.film'
-        print(t(cle, titre=titre_lisible(analyse.video)))
-    if analyse.pistes:
-        print(t('liste.pistes'))
-        for piste in analyse.pistes:
-            print(f'  {decrire(piste)}, {t(f"nature.{nature(piste)}")} ({piste.subtitle_format})')
+        key = 'list.episode' if isinstance(analysis.video, Episode) else 'list.movie'
+        print(t(key, title=readable_title(analysis.video)))
+    if analysis.embedded:
+        print(t('list.embedded'))
+        for track in analysis.embedded:
+            print(f'  {describe(track)}, {t(f"kind.{kind(track)}")} ({track.subtitle_format})')
     else:
-        print(t('liste.pistes_aucune'))
-    if analyse.externes:
-        print(t('liste.externes'))
-        for chemin, externe in analyse.externes.items():
-            print(f'  {chemin.name} ({decrire(externe)})')
+        print(t('list.embedded_none'))
+    if analysis.external:
+        print(t('list.external'))
+        for path, subtitle in analysis.external.items():
+            print(f'  {path.name} ({describe(subtitle)})')
     else:
-        print(t('liste.externes_aucun'))
+        print(t('list.external_none'))
 
 
-def afficher_candidats(candidats: list[Candidat], min_score: int, nombre: int) -> None:
-    """Candidats au-dessus de `min_score` (réglage de la config, comme la CLI de subliminal)."""
-    retenus = au_dessus(candidats, min_score)
+def print_candidates(candidates: list[Candidate], min_score: int, count: int) -> None:
+    """Candidates at or above `min_score` (configuration setting, as subliminal's command line)."""
+    kept = above_threshold(candidates, min_score)
     print()
-    if not retenus:
-        print(t('liste.aucun'))
+    if not kept:
+        print(t('list.none'))
     else:
-        print(t('liste.entete'))
-        for rang, candidat in enumerate(retenus[:nombre], 1):
-            print(ligne_candidat(rang, candidat))
+        print(t('list.header'))
+        for index, candidate in enumerate(kept[:count], 1):
+            print(candidate_line(index, candidate))
         print()
-    affiches = min(nombre, len(retenus))
+    shown = min(count, len(kept))
     if min_score:
-        print(t('liste.total_seuil', n=len(candidats), retenus=len(retenus), seuil=min_score, affiches=affiches))
+        print(t('list.total_threshold', n=len(candidates), kept=len(kept), threshold=min_score, shown=shown))
     else:
-        print(t('liste.total', n=len(candidats), affiches=affiches))
-    if retenus:
-        print(t('liste.legende'))
+        print(t('list.total', n=len(candidates), shown=shown))
+    if kept:
+        print(t('list.legend'))
 
 
-def en_json(analyse: Analyse, candidats: list[Candidat], min_score: int, nombre: int) -> dict[str, Any]:
-    """Résultat structuré (aucun secret : ni identifiant, ni clé, ni jeton)."""
-    video = analyse.video
+def to_json(analysis: Analysis, candidates: list[Candidate], min_score: int, count: int) -> dict[str, Any]:
+    """Structured result (no secret: no username, key or token)."""
+    video = analysis.video
+    kept = above_threshold(candidates, min_score)
     return {
-        'chemin': str(analyse.chemin),
-        'nom_guessit': analyse.nom_guessit,
-        'reconnu': None if video is None else {
-            'type': 'episode' if isinstance(video, Episode) else 'film',
-            'titre': titre_lisible(video),
+        'path': str(analysis.path),
+        'guessit_name': analysis.guessit_name,
+        'recognized': None if video is None else {
+            'type': 'episode' if isinstance(video, Episode) else 'movie',
+            'title': readable_title(video),
         },
-        'pistes': [
+        'embedded': [
             {
-                'langue': str(p.language) if p.language else None, 'format': p.subtitle_format,
-                'nature': nature(p), 'forcee': bool(p.foreign_only), 'malentendants': bool(p.hearing_impaired),
+                'language': str(e.language) if e.language else None, 'format': e.subtitle_format,
+                'kind': kind(e), 'forced': bool(e.foreign_only), 'hearing_impaired': bool(e.hearing_impaired),
             }
-            for p in analyse.pistes
+            for e in analysis.embedded
         ],
-        'externes': [
+        'external': [
             {
-                'fichier': chemin.name, 'langue': str(e.language) if e.language else None,
-                'malentendants': bool(e.hearing_impaired), 'force': bool(e.foreign_only),
+                'file': path.name, 'language': str(s.language) if s.language else None,
+                'hearing_impaired': bool(s.hearing_impaired), 'forced': bool(s.foreign_only),
             }
-            for chemin, e in analyse.externes.items()
+            for path, s in analysis.external.items()
         ],
-        'nombre_candidats': len(candidats),
+        'candidate_count': len(candidates),
         'min_score': min_score,
-        'nombre_retenus': len(au_dessus(candidats, min_score)),
-        'candidats': [
+        'kept_count': len(kept),
+        'candidates': [
             {
-                'source': c.source, 'id': c.sous_titre.id, 'score': c.score, 'score_max': c.score_max,
-                'pourcentage': round(c.pourcentage, 1), 'empreinte': c.empreinte, 'version': c.version,
-                'langue': str(c.sous_titre.language), 'malentendants': c.malentendants,
-                'traduction_auto': c.traduction_auto, 'fps': c.fps,
+                'provider': c.provider, 'id': c.subtitle.id, 'score': c.score, 'max_score': c.max_score,
+                'percent': round(c.percent, 1), 'hash_match': c.hash_match, 'release': c.release,
+                'language': str(c.subtitle.language), 'hearing_impaired': c.hearing_impaired,
+                'machine_translated': c.machine_translated, 'fps': c.fps,
             }
-            for c in au_dessus(candidats, min_score)[:nombre]
+            for c in kept[:count]
         ],
     }  # fmt: skip
 
 
-def commande_liste(args: argparse.Namespace, config: configuration.Config) -> int:
+def cmd_list(args: argparse.Namespace, config: configuration.Config) -> int:
     try:
-        analyse = analyser(args.fichier, config, titre=args.titre)
+        analysis = analyze(args.video, config, title=args.title)
     except (ValueError, OSError) as e:
-        print(t('err.video', erreur=e), file=sys.stderr)
+        print(t('err.video', error=e), file=sys.stderr)
         return 2
-    candidats: list[Candidat] = []
-    if analyse.video is not None:
-        affiner(analyse.video, config)
-        candidats = lister(analyse.video, config)
+    candidates: list[Candidate] = []
+    if analysis.video is not None:
+        refine_video(analysis.video, config)
+        candidates = list_candidates(analysis.video, config)
     if args.json:
-        print(json.dumps(en_json(analyse, candidats, config.min_score, args.nombre), ensure_ascii=False, indent=2))
+        print(json.dumps(to_json(analysis, candidates, config.min_score, args.count), ensure_ascii=False, indent=2))
     else:
-        afficher_analyse(analyse)
-        if analyse.video is not None:
-            afficher_candidats(candidats, config.min_score, args.nombre)
-    return 0 if analyse.video is not None else 3
+        print_analysis(analysis)
+        if analysis.video is not None:
+            print_candidates(candidates, config.min_score, args.count)
+    return 0 if analysis.video is not None else 3
 
 
-def analyseur() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='subdolphin', description=t('cli.description'))
-    parser.add_argument('--config', type=Path, help=t('cli.config', chemin=configuration.CHEMIN_PAR_DEFAUT))
-    parser.add_argument('--debug', action='store_true', help=t('cli.debug'))
-    parser.add_argument('--version', action='version', version=f'%(prog)s {version("subdolphin")}')
-    commandes = parser.add_subparsers(dest='commande', required=True)
-    liste = commandes.add_parser(
-        'liste',
-        help=t('cli.liste'),
-        description=t('cli.liste'),
-        epilog=t('cli.liste_epilogue'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    liste.add_argument('fichier', type=Path, help=t('cli.fichier'))
-    liste.add_argument('--titre', help=t('cli.titre'))
-    liste.add_argument('-n', '--nombre', type=int, default=NOMBRE_CANDIDATS, help=t('cli.nombre', n=NOMBRE_CANDIDATS))
-    liste.add_argument('--json', action='store_true', help=t('cli.json'))
-    choix = commandes.add_parser(
-        'choisir',
-        help=t('cli.choisir'),
-        description=t('cli.choisir'),
-        epilog=t('cli.choisir_epilogue'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    choix.add_argument('fichier', type=Path, help=t('cli.fichier'))
-    choix.add_argument('-n', '--nombre', type=int, default=None, help=t('cli.nombre_tous'))
-    auto = commandes.add_parser(
-        'auto',
-        help=t('cli.auto'),
-        description=t('cli.auto'),
-        epilog=t('cli.auto_epilogue'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    auto.add_argument('chemins', type=Path, nargs='+', help=t('cli.chemins'))
-    auto.add_argument('--texte', action='store_true', help=t('cli.texte'))
-    menus = commandes.add_parser(
-        'menu',
-        help=t('cli.menu'),
-        description=t('cli.menu'),
-        epilog=t('cli.menu_epilogue'),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    menus.add_argument('action', choices=['installer', 'retirer'], help=t('cli.menu_action'))
-    return parser
-
-
-def journal(debug: bool) -> None:
-    """Journal de subliminal sur la sortie d'erreur avec `--debug` (réglé comme sa CLI), sinon rien."""
-    journal_subliminal = logging.getLogger('subliminal')
-    if debug:
-        sortie = logging.StreamHandler()
-        sortie.setFormatter(logging.Formatter(logging.BASIC_FORMAT))
-        journal_subliminal.addHandler(sortie)
-        journal_subliminal.setLevel(logging.DEBUG)
-    else:
-        journal_subliminal.addHandler(logging.NullHandler())
-
-
-def commande_choisir(args: argparse.Namespace) -> int:
-    """Lancée depuis Dolphin : toutes les erreurs s'affichent dans une fenêtre."""
-    if not ui_kdialog.disponible():
+def cmd_choose(args: argparse.Namespace) -> int:
+    """Run from Dolphin: every error is shown in a window."""
+    if not ui_kdialog.available():
         print(t('err.kdialog'), file=sys.stderr)
         return 2
-    ui = ui_kdialog.Kdialog(t('ui.titre'))
+    ui = ui_kdialog.Kdialog(t('ui.title'))
     try:
-        config = configuration.charger(args.config)
-    except configuration.ErreurConfig as e:
-        ui.erreur(str(e))
+        config = configuration.load(args.config)
+    except configuration.ConfigError as e:
+        ui.error(str(e))
         return 2
-    return choisir(args.fichier, config, ui, args.nombre)
+    return choose(args.video, config, ui, args.count)
 
 
-def commande_auto(args: argparse.Namespace) -> int:
-    """Lancée depuis Dolphin (fenêtres) ou dans un terminal (`--texte`)."""
-    if args.texte:
+def cmd_auto(args: argparse.Namespace) -> int:
+    """Run from Dolphin (windows) or in a terminal (`--text`)."""
+    if args.text:
         ui: ui_kdialog.Kdialog | ui_terminal.Terminal = ui_terminal.Terminal()
-    elif ui_kdialog.disponible():
-        ui = ui_kdialog.Kdialog(t('ui.titre'))
+    elif ui_kdialog.available():
+        ui = ui_kdialog.Kdialog(t('ui.title'))
     else:
         print(t('err.kdialog'), file=sys.stderr)
         return 2
     try:
-        config = configuration.charger(args.config)
-    except configuration.ErreurConfig as e:
-        ui.erreur(str(e))
+        config = configuration.load(args.config)
+    except configuration.ConfigError as e:
+        ui.error(str(e))
         return 2
-    bilan = automatique(args.chemins, config, ui)
-    return 1 if bilan.erreurs else 0
+    summary = auto.run(args.paths, config, ui)
+    return 1 if summary.errors else 0
 
 
-def commande_menu(args: argparse.Namespace) -> int:
-    if args.action == 'retirer':
-        retires = menu.retirer()
-        print(t('menu.retire') if retires else t('menu.absent'))
-        for chemin in retires:
-            print(f'  {chemin}')
+def cmd_menu(args: argparse.Namespace) -> int:
+    if args.action == 'remove':
+        removed = menu.remove()
+        print(t('menu.removed') if removed else t('menu.none'))
+        for path in removed:
+            print(f'  {path}')
         return 0
-    commande = menu.commande_courante()
+    command = menu.current_command()
     try:
-        chemins = menu.installer(commande)
+        paths = menu.install(command)
     except (OSError, ValueError) as e:
         print(e, file=sys.stderr)
         return 2
-    print(t('menu.installe', commande=commande))
-    for chemin in chemins:
-        print(f'  {chemin}')
+    print(t('menu.installed', command=command))
+    for path in paths:
+        print(f'  {path}')
     return 0
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog='subdolphin', description=t('cli.description'))
+    parser.add_argument('--config', type=Path, metavar='FILE', help=t('cli.config', path=configuration.DEFAULT_PATH))
+    parser.add_argument('--debug', action='store_true', help=t('cli.debug'))
+    parser.add_argument('--version', action='version', version=f'%(prog)s {version("subdolphin")}')
+    commands = parser.add_subparsers(dest='command', required=True)
+
+    def add_command(name: str, key: str) -> argparse.ArgumentParser:
+        return commands.add_parser(
+            name,
+            help=t(key),
+            description=t(key),
+            epilog=t(f'{key}_epilog'),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+
+    list_parser = add_command('list', 'cli.list')
+    list_parser.add_argument('video', type=Path, metavar='VIDEO', help=t('cli.video'))
+    list_parser.add_argument('--title', metavar='TITLE', help=t('cli.title'))
+    list_parser.add_argument('-n', '--count', type=int, metavar='N', default=DEFAULT_COUNT,
+                             help=t('cli.count', n=DEFAULT_COUNT))  # fmt: skip
+    list_parser.add_argument('--json', action='store_true', help=t('cli.json'))
+
+    choose_parser = add_command('choose', 'cli.choose')
+    choose_parser.add_argument('video', type=Path, metavar='VIDEO', help=t('cli.video'))
+    choose_parser.add_argument('-n', '--count', type=int, metavar='N', default=None, help=t('cli.count_all'))
+
+    auto_parser = add_command('auto', 'cli.auto')
+    auto_parser.add_argument('paths', type=Path, nargs='+', metavar='PATH', help=t('cli.paths'))
+    auto_parser.add_argument('--text', action='store_true', help=t('cli.text'))
+
+    menu_parser = add_command('menu', 'cli.menu')
+    menu_parser.add_argument('action', choices=['install', 'remove'], help=t('cli.menu_action'))
+    return parser
+
+
+def setup_logging(debug: bool) -> None:
+    """subliminal's log on standard error with `--debug` (set up as its command line), nothing otherwise."""
+    logger = logging.getLogger('subliminal')
+    if debug:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(logging.BASIC_FORMAT))
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.addHandler(logging.NullHandler())
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = analyseur().parse_args(argv)
-    journal(args.debug)
-    if args.commande == 'menu':
-        return commande_menu(args)
-    if args.commande == 'choisir':
-        return commande_choisir(args)
-    if args.commande == 'auto':
-        return commande_auto(args)
+    args = build_parser().parse_args(argv)
+    setup_logging(args.debug)
+    if args.command == 'menu':
+        return cmd_menu(args)
+    if args.command == 'choose':
+        return cmd_choose(args)
+    if args.command == 'auto':
+        return cmd_auto(args)
     try:
-        config = configuration.charger(args.config)
-    except configuration.ErreurConfig as e:
+        config = configuration.load(args.config)
+    except configuration.ConfigError as e:
         print(e, file=sys.stderr)
         return 2
-    return commande_liste(args, config)
+    return cmd_list(args, config)
 
 
 if __name__ == '__main__':
